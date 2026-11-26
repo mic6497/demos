@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MindNode Pro</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 0; background: #f9f9f9; color: #333; }
+    #toolbar { display: flex; gap: 10px; padding: 12px 20px; background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); border-bottom: 1px solid #e0e0e0; align-items: center; flex-wrap: wrap; }
+    button, select, input[type=file] { padding: 6px 14px; font-size: 13px; font-weight: 500; border: 1px solid #d0d0d0; border-radius: 6px; background: #fff; cursor: pointer; transition: all 0.2s; }
+    button:hover { background: #f0f0f0; border-color: #b0b0b0; }
+    button.active { background: #007aff; color: white; border-color: #007aff; }
+    #sidebar { position: fixed; top: 54px; left: 0; width: 200px; height: calc(100vh - 54px); background: white; border-right: 1px solid #e0e0e0; padding: 20px; box-sizing: border-box; z-index: 10; overflow-y: auto; }
+    #network { width: calc(100vw - 200px); height: calc(100vh - 54px); margin-left: 200px; background: #fafafa; position: relative; }
+    
+    .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 24px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); z-index: 1000; width: 320px; }
+    .modal.active { display: block; }
+    .modal h3 { margin-top: 0; font-size: 18px; }
+    .modal label { display: block; margin-bottom: 12px; font-size: 13px; color: #666; }
+    .modal input, .modal select, .modal textarea { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-family: inherit; }
+    .modal-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+    .overlay { display: none; position: fixed; top:0; left:0; width:100vw; height:100vh; background: rgba(0,0,0,0.2); z-index: 999; }
+    .overlay.active { display: block; }
+    
+    #nodeActions { display: none; position: absolute; background: white; border: 1px solid #ddd; border-radius: 6px; padding: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; gap: 4px; transform: translate(-50%, calc(-100% - 8px)); }
+    #edgeActions { display: none; position: absolute; background: white; border: 1px solid #ddd; border-radius: 6px; padding: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; gap: 4px; transform: translate(-50%, -50%); }
+    #nodeActions button, #edgeActions button { border: none; padding: 4px 8px; font-size: 14px; }
+    
+    .custom-tooltip { display: none; position: absolute; background: white; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 13px; z-index: 1000; pointer-events: none; transform: translate(-50%, 15px); max-width: 200px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .desc-box { display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 8px; padding: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 99; width: 200px; max-height: 150px; overflow-y: auto; font-size: 13px; transform: translate(-50%, 10px); }
+    .legend-box { position: absolute; bottom: 20px; right: 20px; background: white; border: 1px solid #ccc; border-radius: 8px; padding: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 99; min-width: 150px; font-size: 13px; }
+    #connectBanner { display: none; position: fixed; top: 64px; left: 50%; transform: translateX(-50%); background: #007aff; color: white; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+
+  <div id="toolbar">
+    <button id="addNodeBtn">+ Add Node</button>
+    <button id="addTextBtn">+ Add Text</button>
+    <button id="connectBtn">/ Connect</button>
+    <button onclick="network.moveTo({scale: network.getScale() * 1.2})">Zoom In</button>
+    <button onclick="network.moveTo({scale: network.getScale() * 0.8})">Zoom Out</button>
+    <button id="resetBtn" onclick="resetToInitialState()" title="Reset to original saved state">Reset</button>
+    <span style="border-left: 1px solid #ccc; height: 20px;"></span>
+    <span id="lockedBadge" style="display:none; padding:4px 10px; font-size:12px; font-weight:600; color:#555; background:#e8e8e8; border-radius:12px;">🔒 Locked</span>
+    <span style="margin-left: auto;"></span>
+    <button id="createNewBtn" onclick="createNewMap()" title="Open clean, blank HTML in new window">Create New</button>
+    <input type="file" id="loadFile" style="display:none" accept=".json">
+    <button id="loadBtn" onclick="document.getElementById('loadFile').click()">Load</button>
+    <button id="saveJsonBtn" onclick="saveConfig()">Save to JSON</button>
+    <button id="saveHtmlBtn" onclick="openSaveCustomHtmlModal()">Save to Custom HTML</button>
+    <button onclick="exportPNG()">Export</button>
+  </div>
+
+  <div id="connectBanner">Click two nodes to connect them</div>
+
+  <div id="sidebar">
+    <h3 style="margin-top:0; font-size:14px; text-transform:uppercase; color:#666;">Connection Layers</h3>
+    <div id="layerFilters" style="display:flex; flex-direction:column; gap:8px; margin-bottom: 20px;"></div>
+  </div>
+
+  <div id="network"></div>
+  
+  <div id="legendBox" class="legend-box">
+    <h4 style="margin:0 0 8px 0; font-size:12px; text-transform:uppercase; color:#666; cursor:move;" id="legendHeader">Legend</h4>
+    <div id="legendContainer" style="display:flex; flex-direction:column; gap:8px;"></div>
+  </div>
+  <div class="overlay" id="overlay"></div>
+
+  <div id="nodeActions">
+    <button onclick="editNode()" title="Edit">✎</button>
+    <button onclick="duplicateNode()" title="Duplicate">⎘</button>
+    <button onclick="deleteNode()" title="Delete" style="color: #ff3b30;">✕</button>
+    <button id="resizeHandle" title="Drag to Resize" style="cursor: se-resize;">⤡</button>
+  </div>
+
+  <div id="edgeActions">
+    <button onclick="cycleEdgeDirection()" title="Cycle Direction">⇄</button>
+    <button onclick="cycleEdgeStyle()" title="Cycle Style">⁓</button>
+    <button onclick="openEdgeModal()" title="Edit">✎</button>
+    <button onclick="deleteEdge()" title="Delete" style="color: #ff3b30;">✕</button>
+  </div>
+
+  <div id="descBox" class="desc-box"></div>
+
+  <input type="text" id="inlineEditor" style="display:none; position:absolute; z-index:1000; border: 1px solid #007aff; border-radius: 4px; padding: 4px; text-align: center; outline: none; background: white;">
+
+  <div id="customTooltip" class="custom-tooltip"></div>
+
+  <!-- Node Modal -->
+  <div class="modal" id="nodeModal">
+    <h3>Edit Node</h3>
+    <label>Title: <input type="text" id="nodeTitle"></label>
+    <label>Description: <textarea id="nodeDesc" rows="3"></textarea></label>
+    <label><input type="checkbox" id="nodeShowDesc"> Show description in node</label>
+    <label>Color: <input type="color" id="nodeColor"></label>
+    <div class="modal-buttons">
+      <button onclick="closeModal()">Cancel</button>
+      <button onclick="saveNode()" style="background:#007aff; color:white;">Save</button>
+    </div>
+  </div>
+
+  <!-- Edge Modal -->
+  <div class="modal" id="edgeModal">
+    <h3>Edit Connection</h3>
+    <label>Label: <input type="text" id="edgeLabel"></label>
+    <label>Description: <textarea id="edgeDesc" rows="2"></textarea></label>
+    <label>Tags: 
+      <div id="tagContainer" style="display:flex; flex-wrap:wrap; gap:4px; padding:4px; border:1px solid #ccc; border-radius:6px; align-items:center;">
+        <input type="text" id="edgeTagsInput" placeholder="Add tag..." list="tagSuggestions" style="border:none; outline:none; flex:1; min-width:60px; margin:0; padding:0;">
+        <datalist id="tagSuggestions"></datalist>
+      </div>
+    </label>
+    <label>Direction: 
+      <div style="display:flex; gap:8px; align-items:center;">
+        <select id="edgeDirection" style="flex:1;">
+          <option value="none">None</option>
+          <option value="to">One Way (->)</option>
+          <option value="from">One Way (<-)</option>
+          <option value="to, from">Both (<->)</option>
+        </select>
+        <button type="button" onclick="switchEdgeDirection()" style="padding:8px;">⇄</button>
+      </div>
+    </label>
+    <label>Color: <input type="color" id="edgeColor"></label>
+    <div class="modal-buttons">
+      <button onclick="closeModal()">Cancel</button>
+      <button onclick="saveEdge()" style="background:#007aff; color:white;">Save</button>
+    </div>
+  </div>
+
+  <!-- Save Custom HTML Modal -->
+  <div class="modal" id="saveHtmlModal" style="width: 340px;">
+    <h3>Save to Custom HTML</h3>
+    <label>File Name: <input type="text" id="customHtmlFileName" value="mindmap.html" placeholder="mindmap.html"></label>
+    <label style="display:flex; align-items:center; gap:8px; margin-top:14px; margin-bottom:4px; cursor:pointer;">
+      <input type="checkbox" id="lockNodesCheckbox" style="width:auto; margin:0;">
+      <span style="font-weight:600; color:#333;">Lock Nodes</span>
+    </label>
+    <div style="font-size:12px; color:#666; margin-bottom:16px; line-height:1.4;">
+      Allows showing and hiding connection layers, but prevents editing, adding, or deleting nodes on the new HTML.
+    </div>
+    <div class="modal-buttons">
+      <button onclick="closeModal()">Cancel</button>
+      <button onclick="confirmSaveCustomHtml()" style="background:#007aff; color:white;">Save HTML</button>
+    </div>
+  </div>
+
+  <script id="appScript">
+    /* BAKED_DATA_START */
+    const BAKED_DATA = {"nodes":[{"id":"node-1791160379308","label":"1. APPLICANT: Secure environmental approval for new development","color":{"background":"#f797d8"},"desc":"Authorizations and permits for new developments span many \ndepartments and may include include waste and wastewater \npermitting, land use approvals, and water concessions. \n\nThis graph focuses on Environmental Impact Assessment, \none part of the broader approval process.","showDesc":false,"widthConstraint":169,"heightConstraint":82,"x":-2703,"y":-1735,"title":"Authorizations and permits for new developments span many \ndepartments and may include include waste and wastewater \npermitting, land use approvals, and water concessions. \n\nThis graph focuses on Environmental Impact Assessment, \none part of the broader approval process."},{"id":"node-1791160384452","label":"2. APPLICANT: Determine Federal or State Jurisdiction","color":{"background":"#87f2dd"},"desc":"At the topmost level, the process of Environmental Impact \nAssessment is governed by LGEEPA, with specific \nprovisions prescribed in LGEEPA Article 28. \n\nA handful of circumstances require federal assessment \nand approval; in other cases, a project's environmental \nimpact may be evaluated at the state level, provided the \nstate and federal government have signed an appropriate \naccord. LGEEPA Article 11.\n","showDesc":false,"widthConstraint":125,"heightConstraint":86,"x":-2687,"y":-1467,"title":"At the topmost level, the process of Environmental Impact \nAssessment is governed by LGEEPA, with specific \nprovisions prescribed in LGEEPA Article 28. \n\nA handful of circumstances require federal assessment \nand approval; in other cases, a project's environmental \nimpact may be evaluated at the state level, provided the \nstate and federal government have signed an appropriate \naccord. LGEEPA Article 11.\n"},{"id":"node-1791161557644","label":"3(b). APPLICANT: Determine which SEDESU Environmental Impact Study modality to use","color":{"background":"#b8f976"},"desc":"Querétaro environmental code requires that \ndevelopers seeking environmental approvals \nbegin with an Environmental Impact Study, or \n\"Estudio del Impacto Ambiental\". See Article \n107. \n","showDesc":false,"widthConstraint":160,"heightConstraint":122,"x":-2232,"y":-1156,"title":"Querétaro environmental code requires that \ndevelopers seeking environmental approvals \nbegin with an Environmental Impact Study, or \n\"Estudio del Impacto Ambiental\". See Article \n107. \n"},{"id":"node-1791161759013","label":"4(b)(3). APPLICANT: Submit Induction Form","color":{"background":"#b8f976"},"desc":"The Induction Form (\"Formulario de Inducción\") is a third \nmodality of Environmental Impact Study. \n\nIt is used for production plants housed in facilities that \nalready have environmental impact authorization, and is \nrequired \"whenever the production process involves the \ntransformation or alteration of the physicochemical properties \nof raw materials or inputs.\"\n\nSee Article 109 of the Querétaro Environmental Code.","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-1848,"y":-695,"title":"The Induction Form (\"Formulario de Inducción\") is a third \nmodality of Environmental Impact Study. \n\nIt is used for production plants housed in facilities that \nalready have environmental impact authorization, and is \nrequired \"whenever the production process involves the \ntransformation or alteration of the physicochemical properties \nof raw materials or inputs.\"\n\nSee Article 109 of the Querétaro Environmental Code."},{"id":"node-1791161765207","label":"4(b)(1). APPLICANT + Licensed Preparer: Submit Preventive Report","color":{"background":"#b8f976"},"desc":"The Preventive Report may be used for projects \"intended \nto be carried out within projects that have a prior and valid \nauthorization;\" see Querétaro Environmental Code Article 110. \n\nUnder Article 56 of the Environmental Protection Law for the Sustainable \nDevelopment of the State of Querétaro, SEDESU may respond \nto a Preventive Report by requiring a full Environmental Impact \nStatement. \n\nPractically speaking, SEDESU-published guidelines for the \nPreventive Report and the Environmental Impact Statement \nare nearly identical, and SEDESU approval processes \ndo not seem to differentiate strongly between the two modalities.\n\nSEDESU environmental authorizations refer back to the \napplicant's Environmental Impact Study but do not always \nspecify which modality was received. \n\n","showDesc":false,"widthConstraint":111,"heightConstraint":91,"x":-2330,"y":-678,"title":"The Preventive Report may be used for projects \"intended \nto be carried out within projects that have a prior and valid \nauthorization;\" see Querétaro Environmental Code Article 110. \n\nUnder Article 56 of the Environmental Protection Law for the Sustainable \nDevelopment of the State of Querétaro, SEDESU may respond \nto a Preventive Report by requiring a full Environmental Impact \nStatement. \n\nPractically speaking, SEDESU-published guidelines for the \nPreventive Report and the Environmental Impact Statement \nare nearly identical, and SEDESU approval processes \ndo not seem to differentiate strongly between the two modalities.\n\nSEDESU environmental authorizations refer back to the \napplicant's Environmental Impact Study but do not always \nspecify which modality was received. \n\n"},{"id":"node-1791164118143","label":"4(a)(3). APPLICANT Side-step: Submit Waiver of Environmental Impact Assessment application and request SEMARNAT evaluation","color":{"background":"#fafbac"},"desc":"Developers may apply for exemption from \nEnvironmental Impact Assessment based on rules in\nLGEEPA REIA Article 5 and Article 6. \n\nBroadly, these rules exempt projects involving electrical \npower capacity and transmission, and projects involving the \nexpansion or modification of facilities with existing \nenvironmental permits, provided no new environmental \nimpacts will be incurred. \n\nSee SEMARNAT-04-007 and SEMARNAT-04-006 \nprocedures.","showDesc":false,"widthConstraint":127,"heightConstraint":120,"x":-2781,"y":-718,"title":"Developers may apply for exemption from \nEnvironmental Impact Assessment based on rules in\nLGEEPA REIA Article 5 and Article 6. \n\nBroadly, these rules exempt projects involving electrical \npower capacity and transmission, and projects involving the \nexpansion or modification of facilities with existing \nenvironmental permits, provided no new environmental \nimpacts will be incurred. \n\nSee SEMARNAT-04-007 and SEMARNAT-04-006 \nprocedures."},{"id":"node-1791164294266","label":"** 5(a)(3)(ii). SEMARNAT: Grant Exemption Request","color":{"background":"#fafbac"},"desc":"After evaluation of a developer's request for exemption, \nSEMARNAT may grant a Notice of Non-Requirement. \n\nAs federal actions, Notices of No Requirement and other \nwaivers of Environmental Impact Evaluation are published \nat the SEMARNAT transparency site. \n\n\n","showDesc":false,"widthConstraint":152,"heightConstraint":95,"x":-2723,"y":66,"title":"After evaluation of a developer's request for exemption, \nSEMARNAT may grant a Notice of Non-Requirement. \n\nAs federal actions, Notices of No Requirement and other \nwaivers of Environmental Impact Evaluation are published \nat the SEMARNAT transparency site. \n\n\n"},{"id":"node-1791166740894","label":"7. MUNICIPAL ENTITIES: Additional permits, as appropriate","color":{"background":"#dcb4ee"},"desc":"Even after Environmental Impact Authorization by SEDESU or \nSEMARNAT, the project may still be subject to \nmunicipal-level permitting. ","showDesc":false,"widthConstraint":121,"heightConstraint":69,"x":-2589,"y":893,"title":"Even after Environmental Impact Authorization by SEDESU or \nSEMARNAT, the project may still be subject to \nmunicipal-level permitting. "},{"id":"node-1791166816229","label":"5(b): SEDESU: Evaluate Environmental Impact Study","color":{"background":"#b8f976"},"desc":"Once the Environmental Impact Study is submitted, \nSEDESU evaluates it and makes decisions, a process \ndescribed as \"Environmental Impact Assessment.\"\n\nThe process may involve site visits, monitoring, requests \nfor more information, and additional information-gathering \nby the Secretariat. (Querétaro Environmental Code Article \n116.)\n\nArticle 103 of the Querétaro Environmental Code describes \na \"Public consultation\" requirement, but this does not \nappear to be connected to a public notice or hearing mandate. \n\nArticle 115 of the Querétaro Environmental Code states \nthat \"[t]he Environmental Impact Study will be made available \nto the public so that it can be consulted by any person,\" \nalthough confidentiality measures may apply. \n","showDesc":false,"widthConstraint":143,"heightConstraint":112,"x":-2010,"y":-276,"title":"Once the Environmental Impact Study is submitted, \nSEDESU evaluates it and makes decisions, a process \ndescribed as \"Environmental Impact Assessment.\"\n\nThe process may involve site visits, monitoring, requests \nfor more information, and additional information-gathering \nby the Secretariat. (Querétaro Environmental Code Article \n116.)\n\nArticle 103 of the Querétaro Environmental Code describes \na \"Public consultation\" requirement, but this does not \nappear to be connected to a public notice or hearing mandate. \n\nArticle 115 of the Querétaro Environmental Code states \nthat \"[t]he Environmental Impact Study will be made available \nto the public so that it can be consulted by any person,\" \nalthough confidentiality measures may apply. \n"},{"id":"node-1791397007569","label":"* 4(a)(1). APPLICANT: Submit a Preventive Report and request SEMARNAT evaluation","color":{"background":"#c6e1fb"},"desc":"LGEEPA Article 31 clarifies when a Preventive Report is required, \nrather than a complete Environmental Impact Statement.\n","showDesc":false,"widthConstraint":134,"heightConstraint":78,"x":-3497,"y":-794,"title":"LGEEPA Article 31 clarifies when a Preventive Report is required, \nrather than a complete Environmental Impact Statement.\n"},{"id":"node-1791399207081","label":"* 4(a)(2). APPLICANT: Submit an Environmental Impact Statement and request SEMARNAT evaluation","color":{"background":"#c6e1fb"},"desc":"LGEEPA Article 30 describes requirements for the Environmental \nImpact Statement. \n\nLGEEPA-REIA defines two formats for the EIS and prescribes \ncircumstances governing their use: The Regional or \nParticular (\"Specific\") formats. (Articles 10-12).\n\nIf the project involves \"activities considered highly risky\" \nunder LGEEPA's terms, the Environmental Impact Statement \nmust also include a risk assessment. ","showDesc":false,"widthConstraint":112,"heightConstraint":80,"x":-3105,"y":-755,"title":"LGEEPA Article 30 describes requirements for the Environmental \nImpact Statement. \n\nLGEEPA-REIA defines two formats for the EIS and prescribes \ncircumstances governing their use: The Regional or \nParticular (\"Specific\") formats. (Articles 10-12).\n\nIf the project involves \"activities considered highly risky\" \nunder LGEEPA's terms, the Environmental Impact Statement \nmust also include a risk assessment. "},{"id":"node-1792067431610","label":"3(a). APPLICANT: Determine which SEMARNAT environmental impact assessment form to submit","color":{"background":"#c6e1fb"},"desc":"The federal process of Environmental Impact Assessment \nis managed and evaluated by the Secretariat of Environment \nand Natural Resources (SEMARNAT). \n\nThe two primary forms of SEMARNAT impact assessment \nare: \n\n- The Preventive Report, evaluated through federal action \nSEMARNAT-04-001, and \n\n- The Environmental Impact Statement, evaluated through \nfederal action SEMARNAT-04-002\n\nUnder select circumstances, a developer may apply for a waiver \nof the environmental assessment requirement. See\nSEMARNAT-04-005 and SEMARNAT-04-006.","showDesc":false,"widthConstraint":153,"heightConstraint":93,"x":-3057,"y":-1182,"title":"The federal process of Environmental Impact Assessment \nis managed and evaluated by the Secretariat of Environment \nand Natural Resources (SEMARNAT). \n\nThe two primary forms of SEMARNAT impact assessment \nare: \n\n- The Preventive Report, evaluated through federal action \nSEMARNAT-04-001, and \n\n- The Environmental Impact Statement, evaluated through \nfederal action SEMARNAT-04-002\n\nUnder select circumstances, a developer may apply for a waiver \nof the environmental assessment requirement. See\nSEMARNAT-04-005 and SEMARNAT-04-006."},{"id":"node-1792086873192","label":"5(a)(1)(i): SEMARNAT: PR Denial / EIS demand","color":{"background":"#e5f3ff"},"desc":"SEMARNAT may respond to a Preventive Report by \ndemanding a full Environmental Impact Statement; see \nLGEEPA Article 31 and LGEEPA-REIA Article 33.","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-3403,"y":-218,"title":"SEMARNAT may respond to a Preventive Report by \ndemanding a full Environmental Impact Statement; see \nLGEEPA Article 31 and LGEEPA-REIA Article 33."},{"id":"node-1792347497050","label":"** 5(a)(1)(ii). SEMARNAT: PR Approval","color":{"background":"#73b7f7"},"desc":"Provided the Preliminary Report meets specified requirements, \nthe project may proceed as proposed. See LGEEPA-REIA \nArticle 33 and Article 28.","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-3496,"y":134,"title":"Provided the Preliminary Report meets specified requirements, \nthe project may proceed as proposed. See LGEEPA-REIA \nArticle 33 and Article 28."},{"id":"node-1792348021799","label":"* 4(a)(2)(ii). SEMARNAT / Governent: Public Notice and Comment","color":{"background":"#c6e1fb"},"desc":"Under the LGEEPA Article 34 public notice \nrequirement, the federal government must publish notice \nof the Environmental Impact Assessment and request for \nevaluation in the federal Environmental Gazette.\n\nFor ten days after the initial federal notice, residents of \nthe affected community may request publication of the \nsubmitted EIS. \n\nFor twenty days after the initial federal notice, any party \nmay comment or suggest changes to EIS proposed protection \nplans. Comments will become part of the project file. \n\n","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-3036,"y":-327,"title":"Under the LGEEPA Article 34 public notice \nrequirement, the federal government must publish notice \nof the Environmental Impact Assessment and request for \nevaluation in the federal Environmental Gazette.\n\nFor ten days after the initial federal notice, residents of \nthe affected community may request publication of the \nsubmitted EIS. \n\nFor twenty days after the initial federal notice, any party \nmay comment or suggest changes to EIS proposed protection \nplans. Comments will become part of the project file. \n\n"},{"id":"node-1792352543243","label":"** 5(a)(2)(ii). SEMARNAT: EIA Approval","color":{"background":"#73b7f7"},"desc":"Even when a project's Environmental Impact Statement is \napproved and the project authorized, LGEEPA-REIA Article \n47 notes that:\n\nThe execution of the project or the carrying out of the activity \nin question must comply with the provisions of the respective \nresolution, the relevant Mexican Official Standards issued for \nthis purpose, and all other applicable laws and regulations.\n","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-3067,"y":304,"title":"Even when a project's Environmental Impact Statement is \napproved and the project authorized, LGEEPA-REIA Article \n47 notes that:\n\nThe execution of the project or the carrying out of the activity \nin question must comply with the provisions of the respective \nresolution, the relevant Mexican Official Standards issued for \nthis purpose, and all other applicable laws and regulations.\n"},{"id":"node-1792352549931","label":"** 5(a)(2)(iii). SEMARNAT: EIA Conditional Approval","color":{"background":"#73b7f7"},"desc":"LGEEPA Article 35 and LGEEPA-REIA describe criteria for conditional \napproval.\n\nPractically speaking, nearly all SEMARNAT authorizations \nhave conditions attached. These may include recommendations \nfrom other agencies, requirement of securing additional permits, \nsubmission of timed progress reports, or other considerations. ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2861,"y":348,"title":"LGEEPA Article 35 and LGEEPA-REIA describe criteria for conditional \napproval.\n\nPractically speaking, nearly all SEMARNAT authorizations \nhave conditions attached. These may include recommendations \nfrom other agencies, requirement of securing additional permits, \nsubmission of timed progress reports, or other considerations. "},{"id":"node-1792352554327","label":"5(a)(2)(i). SEMARNAT: EIA Denial","color":{"background":"#73b7f7"},"desc":"LGEEPA Article 35 provides that SEMARNAT may deny \nEnvironmental Impact Authorization if the EIS:\n\na) Contravenes the provisions of this Law, its regulations, the \nofficial Mexican standards and other applicable provisions; \n\nb) The work or activity in question may lead to one or more \nspecies being declared as threatened or endangered species, \nor when one of these species is affected, or\n\nc) There is falsehood in the information provided by the \npromoters, regarding the impacts environmental aspects \nof the work or activity in question.","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-3272,"y":194,"title":"LGEEPA Article 35 provides that SEMARNAT may deny \nEnvironmental Impact Authorization if the EIS:\n\na) Contravenes the provisions of this Law, its regulations, the \nofficial Mexican standards and other applicable provisions; \n\nb) The work or activity in question may lead to one or more \nspecies being declared as threatened or endangered species, \nor when one of these species is affected, or\n\nc) There is falsehood in the information provided by the \npromoters, regarding the impacts environmental aspects \nof the work or activity in question."},{"id":"node-1792352909989","label":"5(a)(2). SEMARNAT: Evaluate the EIS","color":{"background":"#c6e1fb"},"desc":"LGEEPA-REIA Article 44 outlines evaluation criteria for \nEnvironmental Impact Statements. \n\nDuring the evaluation process, SEMARNAT actively seeks \ninput from other federal agencies as well as state and municipal \nauthorities, and their recommendations may be included as \nconditions for SEMARNAT's environmental authorization.\n\nIn evaluating the EIS, SEMARNAT verifies that mandatory \npublic notice processes have taken place.\n\nLGEEPA-REIA Article 47 notes that the applicant may request \nthat SEMARNAT's action resolving the Environmental Impact \nAssessment incorporate necessary permits and authorizations \nfrom other federal agencies.","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2964,"y":-94,"title":"LGEEPA-REIA Article 44 outlines evaluation criteria for \nEnvironmental Impact Statements. \n\nDuring the evaluation process, SEMARNAT actively seeks \ninput from other federal agencies as well as state and municipal \nauthorities, and their recommendations may be included as \nconditions for SEMARNAT's environmental authorization.\n\nIn evaluating the EIS, SEMARNAT verifies that mandatory \npublic notice processes have taken place.\n\nLGEEPA-REIA Article 47 notes that the applicant may request \nthat SEMARNAT's action resolving the Environmental Impact \nAssessment incorporate necessary permits and authorizations \nfrom other federal agencies."},{"id":"node-1793906034866","label":"** 6. APPLICANT and SEDESU or other state actors: Additional Licenses and Approvals","color":{"background":"#99d45e"},"desc":"\nEnvironmental Impact Authorization is prerequisite for other \nlicenses and permits. \n\nPublished records of these other licensing approvals refer \nback to prior EIA approvals and may be a route to discovery. ","showDesc":false,"widthConstraint":210,"heightConstraint":139,"x":-2164,"y":494,"title":"\nEnvironmental Impact Authorization is prerequisite for other \nlicenses and permits. \n\nPublished records of these other licensing approvals refer \nback to prior EIA approvals and may be a route to discovery. "},{"id":"node-1795049449194","label":"** 5(b)(3). SEDESU: Conditionally Approve the Environmental Impact Authorization","color":{"background":"#99d45e"},"desc":"Practically speaking, most Environmental Impact Authorizations \ngranted by SEDESU include conditions. These may involve: \nsubmission of regular compliance reports, specific requirements \nfor plantings or stormwater management, or demonstration of \nadditional permits within a designated time period. \n\nIf the EIA is for a production facility, SEDESU may\nrequire an approved Induction Form in addition to the \nEnvironmental Impact Statement.\n\nPenalties may be applied or approvals revoked if conditions \nare not met. \n\nAuthorizations commonly require ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-1919,"y":90,"title":"Practically speaking, most Environmental Impact Authorizations \ngranted by SEDESU include conditions. These may involve: \nsubmission of regular compliance reports, specific requirements \nfor plantings or stormwater management, or demonstration of \nadditional permits within a designated time period. \n\nIf the EIA is for a production facility, SEDESU may\nrequire an approved Induction Form in addition to the \nEnvironmental Impact Statement.\n\nPenalties may be applied or approvals revoked if conditions \nare not met. \n\nAuthorizations commonly require "},{"id":"node-1795049450427","label":"5(b)(1). SEDESU: Deny the Environmental Impact Authorization","color":{"background":"#99d45e"},"desc":"SEDESU denials do not appear to be published in \nQuerétaro's database of state government permits, \nlicenses, and authorizations. ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2297,"y":-7,"title":"SEDESU denials do not appear to be published in \nQuerétaro's database of state government permits, \nlicenses, and authorizations. "},{"id":"node-1795049451527","label":"** 5(b)(2). SEDESU: Approve the Environmental Impact Authorization","color":{"background":"#99d45e"},"desc":"In theory, SEDESU could approve an EIA without \nadditional conditions, but this seems to be rare. ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2115,"y":75,"title":"In theory, SEDESU could approve an EIA without \nadditional conditions, but this seems to be rare. "},{"id":"node-1795551462089","label":"* 4(a)(2)(1). APPLICANT: Publish notice of project","color":{"background":"#c6e1fb"},"desc":"Under LGEEPA Article 34, the applicant must publish notice \nof the project in a regional newspaper of wide circulation. \n","showDesc":false,"widthConstraint":93,"heightConstraint":70,"x":-3239,"y":-337,"title":"Under LGEEPA Article 34, the applicant must publish notice \nof the project in a regional newspaper of wide circulation. \n"},{"id":"node-1795552627998","label":"5(a)(3)(i). SEMARNAT: Deny Exemption Request","color":{"background":"#fafbac"},"desc":"SEMARNAT may deny a waiver or Notice of No Requirement \nrequest. \n\nPresumably, if the waiver request is denied, the applicant \nwould then submit an environmental impact assessment \nand request for evaluation, either at the state or the local level. ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2593,"y":-222,"title":"SEMARNAT may deny a waiver or Notice of No Requirement \nrequest. \n\nPresumably, if the waiver request is denied, the applicant \nwould then submit an environmental impact assessment \nand request for evaluation, either at the state or the local level. "},{"id":"node-1795553124456","label":"4(b)(2). APPLICANT + Licensed Preparer: Submit Environmental Impact Statement","color":{"background":"#b8f976"},"desc":"The Environmental Impact Statement is the default \nmodality for Environmental Impact Studies required under \nQuerétaro environmental law. Querétaro Environmental \nCode Article 111.\n","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2093,"y":-690,"title":"The Environmental Impact Statement is the default \nmodality for Environmental Impact Studies required under \nQuerétaro environmental law. Querétaro Environmental \nCode Article 111.\n"},{"id":"node-1795642883541","label":"5(a)(1). SEMARNAT: Evaluate Preventive Report","color":{"background":"#c6e1fb"},"desc":"LGEEPA-REIA Article 33 provides that the Secretariat shall \nreview the preliminary [preventive] report and inform the \napplicant of results within twenty days. ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-3548,"y":-523,"title":"LGEEPA-REIA Article 33 provides that the Secretariat shall \nreview the preliminary [preventive] report and inform the \napplicant of results within twenty days. "},{"id":"node-1795643464521","label":"5(a)(3): SEMARNAT: Evaluate Request for EIA Exemption","color":{"background":"#fafbac"},"desc":"As part of the evaluation process, SEMARNAT confirms \nthat the project is eligible for waiver or EIA exemption. ","showDesc":false,"widthConstraint":112,"heightConstraint":84,"x":-2762,"y":-364,"title":"As part of the evaluation process, SEMARNAT confirms \nthat the project is eligible for waiver or EIA exemption. "},{"id":"node-1795707373390","label":"4(b)(0).Power of the Executive: Coordinate Public Consultation","color":{"background":"#b8f976"},"desc":"Querétaro Environmental Code Article 103 states that SEDESU \nmust consider \"the results of the public consultation\" as part \nof the official Environmental Assessment System. \n\nHowever, applicable laws and published applicant guidelines \nfor the Environmental Impact Study say nothing about how \npublic consultation fits into the procedure, and public notice \nis not verified in official approval documents. \n\nQuerétaro Environmental Code Article 18 section X states \nthat \"the Executive Branch, through the Secretariat, in \ncoordination with the Municipalities.... will promote public \nconsultation on environmental impact regarding the project public.\" \n\nIt is not clear how this is accomplished or what the legal \nexpectation may be. ","showDesc":false,"widthConstraint":100,"heightConstraint":50,"x":-2379,"y":-323,"title":"Querétaro Environmental Code Article 103 states that SEDESU \nmust consider \"the results of the public consultation\" as part \nof the official Environmental Assessment System. \n\nHowever, applicable laws and published applicant guidelines \nfor the Environmental Impact Study say nothing about how \npublic consultation fits into the procedure, and public notice \nis not verified in official approval documents. \n\nQuerétaro Environmental Code Article 18 section X states \nthat \"the Executive Branch, through the Secretariat, in \ncoordination with the Municipalities.... will promote public \nconsultation on environmental impact regarding the project public.\" \n\nIt is not clear how this is accomplished or what the legal \nexpectation may be. "}],"edges":[{"id":"edge-1791199985979","from":"node-1791160379308","to":"node-1791160382981","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1791199989504","from":"node-1791160379308","to":"node-1791166787935","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1791199991754","from":"node-1791160379308","to":"node-1791160384452","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Electrical capacity expansion","New industrial park","Asphalt production facility","Default","Federal","State"],"color":"#848484"},{"id":"edge-1791200010084","from":"node-1791161470980","to":"node-1791161557644","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["New industrial park","Asphalt production facility","Default","State"],"color":"#848484"},{"id":"edge-1791200018993","from":"node-1791161557644","to":"node-1791161759013","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Asphalt production facility","Default","State","Default"],"color":"#848484"},{"id":"edge-1791200021829","from":"node-1791161557644","to":"node-1791161761953","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791200161013","from":"node-1791161761953","to":"node-1791166816229","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791200254042","from":"node-1791166816229","to":"node-1791166920024","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791200257493","from":"node-1791166816229","to":"node-1791166919548","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to"},{"id":"edge-1791200263988","from":"node-1791166816229","to":"node-1791166918886","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","State"],"color":"#848484","arrows":"none"},{"id":"edge-1791200294556","from":"node-1791166998343","to":"node-1791166919548","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false},{"id":"edge-1791200411992","from":"node-1791166919548","to":"node-1791166918886","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to"},{"id":"edge-1791200421635","from":"node-1791160382981","to":"node-1791166740894","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1791200427575","from":"node-1791166787935","to":"node-1791166740894","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1791399197046","from":"node-1791399140975","to":"node-1791161761953","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791399235957","from":"node-1791161759013","to":"node-1791399140975","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791399264727","from":"node-1791161761953","to":"node-1791397010480","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791399281078","from":"node-1791399140975","to":"node-1791161765207","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791399289973","from":"node-1791397010480","to":"node-1791161765207","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1791399693369","from":"node-1791166740894","to":"node-1791164294266","label":"presumed pathway","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal","Electrical capacity expansion","Parking lot expansion"],"color":"#2c4ced"},{"id":"edge-1791401652454","from":"node-1791166816229","to":"node-1791401501324","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["New industrial park","Default","State"],"color":"#848484"},{"id":"edge-1792076372849","from":"node-1791160384452","to":"node-1791160382472","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Electrical capacity expansion","Parking lot exapnsion","Default","Federal"],"color":"#848484"},{"id":"edge-1792076380754","from":"node-1791160384452","to":"node-1792065989171","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["New industrial park","Asphalt production facility","Default","State"],"color":"#848484"},{"id":"edge-1792077434069","from":"node-1792065989171","to":"node-1792067477405","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["New industrial park","Asphalt production facility","Default","State"],"color":"#848484"},{"id":"edge-1792077442895","from":"node-1792071004325","to":"node-1792067477405","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1792077488249","from":"node-1792067477405","to":"node-1792077457364","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["New industrial park","Asphalt production facility","Default","State"],"color":"#848484"},{"id":"edge-1792078821847","from":"node-1792077457364","to":"node-1791161470980","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["New industrial park","Asphalt production facility","Default","State"],"color":"#848484"},{"id":"edge-1792086861709","from":"node-1792067431610","to":"node-1791399207081","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1792086949393","from":"node-1792086873192","to":"node-1791399207081","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792087068228","from":"node-1791166920024","to":"node-1792080944482","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1792087076794","from":"node-1791401501324","to":"node-1792080944482","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["New industrial park","Default","State"],"color":"#848484","arrows":"none"},{"id":"edge-1792087087262","from":"node-1791166918886","to":"node-1792080944482","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1792087104028","from":"node-1791160382472","to":"node-1792067431610","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Electrical capacity expansion","Parking lot exapnsion","Default","Federal"],"color":"#848484"},{"id":"edge-1792087111545","from":"node-1792067431610","to":"node-1791164118143","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal","Parking lot expansion","Electrical capacity expansion"],"color":"#848484"},{"id":"edge-1792266311778","from":"node-1791164294266","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Parking lot exapnsion","Default","Federal"],"color":"#848484"},{"id":"edge-1792346573383","from":"node-1791166787935","to":"node-1791160382472","label":"","type":"default","smooth":{"type":"curvedCCW","roundness":0.35},"hidden":false,"arrows":"none","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1792346678240","from":"node-1791160382472","to":"node-1791160382981","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1792352417409","from":"node-1792348021799","to":"node-1792349107982","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1792354879618","from":"node-1792352554327","to":"node-1792352909989","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792354886936","from":"node-1792352543243","to":"node-1792352909989","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792354892655","from":"node-1792352549931","to":"node-1792352909989","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1792354943548","from":"node-1792347497532","to":"node-1792352909989","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1792354947045","from":"node-1792347163674","to":"node-1792352909989","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1792354956868","from":"node-1791397007569","to":"node-1792347497532","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792355045455","from":"node-1792067431610","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCCW","roundness":0.35},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792355096501","from":"node-1792347497050","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792355101601","from":"node-1792352549931","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Default","Federal","Water pipeline"],"color":"#848484"},{"id":"edge-1792355105457","from":"node-1792352543243","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792355109476","from":"node-1792352554327","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792355253970","from":"node-1792347163674","to":"node-1792347496434","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1792362195114","from":"node-1791161557644","to":"node-1792080163968","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1792365311011","from":"node-1791166918886","to":"node-1791164294266","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792368350855","from":"node-1792077457364","to":"node-1791164118143","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1792368409401","from":"node-1791161470980","to":"node-1792360532381","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1792370481845","from":"node-1792361025908","to":"node-1791161761953","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1792370505664","from":"node-1792361025908","to":"node-1791161765207","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1793829128156","from":"node-1791399207081","to":"node-1793828751942","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Default","Federal"],"color":"#848484"},{"id":"edge-1793829150790","from":"node-1791399207081","to":"node-1793828762217","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1793829329903","from":"node-1793828751942","to":"node-1792348021799","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Default","Federal"],"color":"#848484"},{"id":"edge-1793829335365","from":"node-1793828762217","to":"node-1792348021799","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1793889086504","from":"node-1792352909989","to":"node-1792077457364","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1793889095934","from":"node-1792352909989","to":"node-1791166787935","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Interstate highway modernization","Water pipeline","Default","Federal"],"color":"#848484"},{"id":"edge-1793904568781","from":"node-1792067431610","to":"node-1793904445340","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Electrical capacity expansion","Default","Federal"],"color":"#848484"},{"id":"edge-1793904614524","from":"node-1793904445340","to":"node-1791164118143","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Electrical capacity expansion"],"color":"#858585"},{"id":"edge-1793904635255","from":"node-1793904445340","to":"node-1792081318007","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default"],"color":"#848484","arrows":"none"},{"id":"edge-1793906255262","from":"node-1791401501324","to":"node-1793906034866","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1793906262428","from":"node-1791166918886","to":"node-1793906034866","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1793906298652","from":"node-1793906034866","to":"node-1792080944482","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Asphalt production facility","Default","State"],"color":"#848484"},{"id":"edge-1794584904234","from":"node-1791161759013","to":"node-1794584599763","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Asphalt production facility","State"],"color":"#848484"},{"id":"edge-1794584916880","from":"node-1791161761953","to":"node-1794584599763","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to"},{"id":"edge-1794584939885","from":"node-1794584599763","to":"node-1793906034866","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Asphalt production facility","State"],"color":"#848484"},{"id":"edge-1794585067807","from":"node-1794584760358","to":"node-1794584599763","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1794587636756","from":"node-1793906034866","to":"node-1791166740894","label":"presumed pathway","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","State","Asphalt production facility","New industrial park"],"color":"#2c4ced","arrows":"to"},{"id":"edge-1795046251999","from":"node-1791166740894","to":"node-1792347497050","label":"presumed pathway","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","Federal"],"color":"#2a4ced","arrows":"from"},{"id":"edge-1795049009878","from":"node-1791161557644","to":"node-1791160384452","label":"State evaluation","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","State","New industrial park","Asphalt production facility"],"color":"#848484","arrows":"from"},{"id":"edge-1795049024795","from":"node-1791397007569","to":"node-1792067431610","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1795049043744","from":"node-1791161765207","to":"node-1791161557644","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","State","New industrial park"],"color":"#848484","arrows":"from"},{"id":"edge-1795049064211","from":"node-1791166816229","to":"node-1791161765207","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","New industrial park","State"],"color":"#848484","arrows":"from"},{"id":"edge-1795049325628","from":"node-1791160384452","to":"node-1792067431610","label":"Federal evaluation","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","Federal","Parking lot expansion","Water pipeline","Interstate highway modernization","Electrical capacity expansion"],"color":"#848484","arrows":"to"},{"id":"edge-1795050128027","from":"node-1791166816229","to":"node-1795049451527","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State","New industrial park","Asphalt production facility"],"color":"#848484"},{"id":"edge-1795050132561","from":"node-1791166816229","to":"node-1795049449194","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795050136427","from":"node-1791166816229","to":"node-1795049450427","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795053306921","from":"node-1791166740894","to":"node-1792352543243","label":"presumed pathway","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","Federal"],"color":"#2c4ced","arrows":"from"},{"id":"edge-1795053310837","from":"node-1791166740894","to":"node-1792352549931","label":"presumed pathway","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","Interstate highway modernization","Federal","Water pipeline"],"color":"#2c4ced","arrows":"from"},{"id":"edge-1795054119012","from":"node-1795049451527","to":"node-1793906034866","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","New industrial park","State"],"color":"#848484","arrows":"to"},{"id":"edge-1795054122298","from":"node-1795049449194","to":"node-1793906034866","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","State"],"color":"#848484","arrows":"to"},{"id":"edge-1795054701078","from":"node-1791399207081","to":"node-1792348021799","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","Interstate highway modernization","Water pipeline","Federal"],"color":"#848484","arrows":"to"},{"id":"edge-1795552076677","from":"node-1791399207081","to":"node-1795551462089","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Interstate highway modernization","Federal","Water pipeline"],"color":"#848484"},{"id":"edge-1795552217794","from":"node-1792352909989","to":"node-1792348021799","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Water pipeline","Interstate highway modernization","Federal"],"color":"#848484"},{"id":"edge-1795552226256","from":"node-1792352909989","to":"node-1795551462089","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Interstate highway modernization","Water pipeline","Federal"],"color":"#848484"},{"id":"edge-1795614494016","from":"node-1791161557644","to":"node-1795553124456","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795614833791","from":"node-1795553124456","to":"node-1791166816229","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795643141931","from":"node-1792347497050","to":"node-1795642883541","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1795643191496","from":"node-1792086873192","to":"node-1795642883541","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1795643707553","from":"node-1791164118143","to":"node-1795643464521","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Electrical capacity expansion","Parking lot expansion","Federal"],"color":"#848484"},{"id":"edge-1795643735749","from":"node-1795643464521","to":"node-1795552627998","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","Federal"],"color":"#848484"},{"id":"edge-1795643803086","from":"node-1791160384452","to":"node-1795552627998","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default"],"color":"#848484"},{"id":"edge-1795643831570","from":"node-1791164294266","to":"node-1795643464521","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"desc":"","tags":["Default","Federal","Electrical capacity expansion","Parking lot expansion"],"color":"#848484","arrows":"none"},{"id":"edge-1795649454463","from":"node-1795553124456","to":"node-1791166816229","label":"","type":"default","smooth":{"type":"curvedCCW","roundness":0.35},"hidden":false,"arrows":"from","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795651032573","from":"node-1791161759013","to":"node-1791166816229","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State","Asphalt production facility"],"color":"#848484"},{"id":"edge-1795651048252","from":"node-1791161759013","to":"node-1795049449194","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795707970582","from":"node-1791161759013","to":"node-1795707373390","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795707977407","from":"node-1795553124456","to":"node-1795707373390","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795707981894","from":"node-1791161765207","to":"node-1795707373390","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795707999998","from":"node-1791166816229","to":"node-1795707373390","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"to","desc":"","tags":["Default","State"],"color":"#848484"},{"id":"edge-1795712834246","from":"node-1795642883541","to":"node-1791397007569","label":"","type":"default","smooth":{"type":"curvedCW","roundness":0.2},"hidden":false,"arrows":"from","desc":"","tags":["Default","Federal"],"color":"#848484"}],"legendLabels":{"node:#ffffff:normal":"Transparency requirements","node:#a6f556:normal":"","node:#f797d8:normal":"New Project starting place","node:#c6e1fb:normal":"SEMARNAT assessment process","node:#87f2dd:normal":"Environmental Impact Authorization","node:#b8f976:normal":"SEDESU assessment process","node:#fafbac:normal":"SEMARNAT non-requirement","node:#f6fbb7:normal":"","node:#dcb4ee:normal":"Municipal permitting endpoint","node:#94c95e:normal":"","node:#d9f5bc:normal":"SEDESU format change","node:#56f59b:normal":"","node:#80f40b:normal":"","node:#e5f3ff:normal":"SEMARNAT format change","node:#73b7f7:normal":"SEMARNAT decisions","node:#99d45e:normal":"SEDESU decisions"}};
+    /* BAKED_DATA_END */
+
+    /* LOCKED_NODES_START */
+    const LOCKED_NODES = false;
+    /* LOCKED_NODES_END */
+
+    let currentBaselineData = BAKED_DATA ? JSON.parse(JSON.stringify(BAKED_DATA)) : null;
+
+    let network = null;
+    let graph = { nodes: new vis.DataSet(), edges: new vis.DataSet() };
+    let activeModal = null, editingId = null, selectedNodeId = null;
+    let connecting = { active: false, from: null };
+    let visibleLayers = new Set();
+    let currentEdgeTags = [];
+    let legendLabels = {};
+    let resizing = { active: false, nodeId: null, startX: 0, startY: 0, startWidth: 0, startHeight: 0 };
+
+    const container = document.getElementById('network');
+    const options = {
+      nodes: { 
+        shape: 'box', 
+        margin: 15, 
+        shapeProperties: { borderRadius: 8 }, 
+        font: { size: 16, multi: 'html', ital: { size: 11, color: '#888888' } } 
+      },
+      edges: { 
+        width: 1.5, 
+        arrows: { to: { scaleFactor: 0.6 } }, 
+        smooth: { type: 'curvedCW' }, 
+        font: { align: 'middle' } 
+      },
+      physics: false,
+      interaction: { hover: true, zoomSpeed: 0.2, dragNodes: !LOCKED_NODES }
+    };
+
+    network = new vis.Network(container, graph, options);
+
+    function applyLockState(locked) {
+      const addNodeBtn = document.getElementById('addNodeBtn');
+      const addTextBtn = document.getElementById('addTextBtn');
+      const connectBtn = document.getElementById('connectBtn');
+      const loadBtn = document.getElementById('loadBtn');
+      const lockedBadge = document.getElementById('lockedBadge');
+
+      if (addNodeBtn) addNodeBtn.style.display = locked ? 'none' : '';
+      if (addTextBtn) addTextBtn.style.display = locked ? 'none' : '';
+      if (connectBtn) connectBtn.style.display = locked ? 'none' : '';
+      if (loadBtn) loadBtn.style.display = locked ? 'none' : '';
+      if (lockedBadge) lockedBadge.style.display = locked ? 'inline-block' : 'none';
+
+      if (network) {
+        network.setOptions({ interaction: { dragNodes: !locked } });
+      }
+    }
+
+    document.getElementById('addNodeBtn').addEventListener('click', () => {
+      if (LOCKED_NODES) return;
+      const id = `node-${Date.now()}`;
+      const offset = Math.random() * 40 - 20;
+      graph.nodes.add({ id, label: 'New Node', color: { background: '#ffffff' }, desc: '', showDesc: false, widthConstraint: 100, heightConstraint: 50, x: offset, y: offset });
+    });
+
+    document.getElementById('addTextBtn').addEventListener('click', () => {
+      if (LOCKED_NODES) return;
+      const id = `node-${Date.now()}`;
+      const offset = Math.random() * 40 - 20;
+      graph.nodes.add({ id, label: 'Text Box', shape: 'text', desc: '', showDesc: false, x: offset, y: offset });
+    });
+
+    // Legend Dragging
+    const legendBox = document.getElementById('legendBox');
+    const legendHeader = document.getElementById('legendHeader');
+    let isDraggingLegend = false, legendX = 0, legendY = 0;
+
+    legendHeader.addEventListener('mousedown', (e) => {
+      isDraggingLegend = true;
+      legendX = e.clientX - legendBox.getBoundingClientRect().left;
+      legendY = e.clientY - legendBox.getBoundingClientRect().top;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingLegend) return;
+      legendBox.style.left = (e.clientX - legendX) + 'px';
+      legendBox.style.top = (e.clientY - legendY) + 'px';
+      legendBox.style.right = 'auto';
+      legendBox.style.bottom = 'auto';
+    });
+
+    window.addEventListener('mouseup', () => { isDraggingLegend = false; });
+
+    const connectBtn = document.getElementById('connectBtn');
+    connectBtn.addEventListener('click', () => {
+      if (LOCKED_NODES) return;
+      connecting.active = !connecting.active; connecting.from = null;
+      connectBtn.classList.toggle('active', connecting.active);
+      document.getElementById('connectBanner').style.display = connecting.active ? 'block' : 'none';
+    });
+
+    function hideAllJoints() {
+      graph.nodes.get().forEach(n => {
+        if (n.isJoint) graph.nodes.update({ id: n.id, color: { background: '#007aff', border: '#007aff' }, size: 4 });
+      });
+    }
+
+    network.on('click', (params) => {
+      const actions = document.getElementById('nodeActions');
+      const edgeActions = document.getElementById('edgeActions');
+      const descBox = document.getElementById('descBox');
+      
+      actions.style.display = 'none';
+      edgeActions.style.display = 'none';
+      descBox.style.display = 'none';
+      hideAllJoints();
+      
+      if (!LOCKED_NODES && connecting.active && params.nodes.length > 0) {
+        const clickedId = params.nodes[0];
+        if (!connecting.from) { connecting.from = clickedId; } 
+        else {
+          const edgeId = `edge-${Date.now()}`;
+          
+          // Count existing edges between these two nodes (both directions)
+          const existingEdges = graph.edges.get().filter(e => 
+            (e.from === connecting.from && e.to === clickedId) || 
+            (e.from === clickedId && e.to === connecting.from)
+          );
+          
+          const roundness = 0.2 + (existingEdges.length * 0.15);
+          const type = existingEdges.length % 2 === 0 ? 'curvedCW' : 'curvedCCW';
+
+          graph.edges.add({ 
+            id: edgeId, 
+            from: connecting.from, 
+            to: clickedId, 
+            label: '', 
+            type: 'default',
+            smooth: { type: type, roundness: roundness }
+          });
+
+          connecting.from = null; connecting.active = false; connectBtn.classList.remove('active');
+          document.getElementById('connectBanner').style.display = 'none'; updateLayers();
+          
+          network.setOptions({ interaction: { dragNodes: false } });
+          setTimeout(() => { network.setOptions({ interaction: { dragNodes: !LOCKED_NODES } }); }, 200);
+        }
+      } else if (params.nodes.length > 0) {
+        selectedNodeId = params.nodes[0];
+        const node = graph.nodes.get(selectedNodeId);
+        
+        document.getElementById('customTooltip').style.display = 'none';
+
+        if (!LOCKED_NODES) {
+          const box = network.getBoundingBox(selectedNodeId);
+          const domPos = network.canvasToDOM({x: (box.left + box.right)/2, y: box.top});
+          const rect = container.getBoundingClientRect();
+          actions.style.left = (domPos.x + rect.left) + 'px'; 
+          actions.style.top = (domPos.y + rect.top) + 'px';
+          actions.style.display = 'flex';
+        }
+
+        if (node.desc) {
+          const box = network.getBoundingBox(selectedNodeId);
+          const bottomDomPos = network.canvasToDOM({x: (box.left + box.right)/2, y: box.bottom});
+          const rect = container.getBoundingClientRect();
+          descBox.innerText = node.desc;
+          descBox.style.left = (bottomDomPos.x + rect.left) + 'px';
+          descBox.style.top = (bottomDomPos.y + rect.top) + 'px';
+          descBox.style.display = 'block';
+        }
+      } else if (params.edges.length > 0 && params.nodes.length === 0) {
+        selectedNodeId = params.edges[0];
+        const edge = graph.edges.get(selectedNodeId);
+
+        if (!LOCKED_NODES) {
+          const edgeActions = document.getElementById('edgeActions');
+          const rect = container.getBoundingClientRect();
+          edgeActions.style.left = (params.pointer.DOM.x + rect.left) + 'px';
+          edgeActions.style.top = (params.pointer.DOM.y + rect.top - 40) + 'px';
+          edgeActions.style.display = 'flex';
+        }
+
+        if (edge.desc) {
+          descBox.innerText = edge.desc;
+          descBox.style.left = (params.pointer.DOM.x + rect.left) + 'px';
+          descBox.style.top = (params.pointer.DOM.y + rect.top + 20) + 'px';
+          descBox.style.display = 'block';
+        }
+      }
+    });
+
+    network.on('doubleClick', (params) => {
+      if (LOCKED_NODES) return;
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = graph.nodes.get(nodeId);
+        const box = network.getBoundingBox(nodeId);
+        const domPos = network.canvasToDOM({x: (box.left + box.right)/2, y: (box.top + box.bottom)/2});
+        const rect = container.getBoundingClientRect();
+        
+        const editor = document.getElementById('inlineEditor');
+        editor.value = node.label.split('<')[0].trim();
+        editor.style.left = (domPos.x + rect.left - 75) + 'px';
+        editor.style.top = (domPos.y + rect.top - 15) + 'px';
+        editor.style.width = '150px';
+        editor.style.display = 'block';
+        editor.focus();
+        
+        const save = () => {
+          const newTitle = editor.value;
+          let fullLabel = newTitle;
+          if (node.showDesc && node.desc) {
+            const shortDesc = node.desc.length > 40 ? node.desc.substring(0, 40) + '...' : node.desc;
+            fullLabel = `${newTitle}\n<i>${shortDesc}</i>`;
+          }
+          graph.nodes.update({ id: nodeId, label: fullLabel });
+          editor.style.display = 'none';
+          editor.removeEventListener('blur', save);
+          editor.removeEventListener('keydown', onKey);
+        };
+        
+        const onKey = (e) => { if (e.key === 'Enter') save(); };
+        
+        editor.addEventListener('blur', save);
+        editor.addEventListener('keydown', onKey);
+      }
+    });
+
+    network.on('hoverNode', (params) => {
+      if (document.getElementById('descBox').style.display === 'block') return;
+      const node = graph.nodes.get(params.node);
+      if (node && node.desc) {
+        const tooltip = document.getElementById('customTooltip');
+        tooltip.innerText = node.desc;
+        const box = network.getBoundingBox(params.node);
+        const domPos = network.canvasToDOM({x: (box.left + box.right)/2, y: box.bottom});
+        const rect = container.getBoundingClientRect();
+        tooltip.style.left = (domPos.x + rect.left) + 'px';
+        tooltip.style.top = (domPos.y + rect.top + 10) + 'px';
+        tooltip.style.display = '-webkit-box';
+      }
+    });
+
+    network.on('blurNode', () => {
+      document.getElementById('customTooltip').style.display = 'none';
+    });
+
+    network.on('hoverEdge', (params) => {
+      if (document.getElementById('descBox').style.display === 'block') return;
+      let edge = graph.edges.get(params.edge);
+      
+      if (edge && (edge.desc || edge.label)) {
+        const tooltip = document.getElementById('customTooltip');
+        tooltip.innerText = edge.desc || edge.label;
+        const pointer = params.pointer.DOM;
+        const rect = container.getBoundingClientRect();
+        tooltip.style.left = (pointer.x + rect.left) + 'px';
+        tooltip.style.top = (pointer.y + rect.top + 10) + 'px';
+        tooltip.style.display = '-webkit-box';
+      }
+    });
+
+    network.on('blurEdge', () => {
+      document.getElementById('customTooltip').style.display = 'none';
+    });
+
+    network.on('dragging', (params) => {
+      if (params.nodes.includes(selectedNodeId)) {
+        const actions = document.getElementById('nodeActions');
+        const box = network.getBoundingBox(selectedNodeId);
+        const domPos = network.canvasToDOM({x: (box.left + box.right)/2, y: box.top});
+        actions.style.left = domPos.x + 'px'; actions.style.top = domPos.y + 'px';
+      }
+
+      // Update joint offsets or positions
+      graph.nodes.get().forEach(node => {
+        if (node.isJoint) {
+          const p1 = network.getPositions([node.originalFrom])[node.originalFrom];
+          const p2 = network.getPositions([node.originalTo])[node.originalTo];
+          if (p1 && p2) {
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            
+            if (params.nodes.includes(node.id)) {
+              // Dragging the joint itself
+              const cp = network.getPositions([node.id])[node.id];
+              graph.nodes.update({ id: node.id, offsetX: cp.x - midX, offsetY: cp.y - midY });
+            } else {
+              // Dragging a connected node
+              graph.nodes.update({ id: node.id, x: midX + (node.offsetX || 0), y: midY + (node.offsetY || 0) });
+            }
+          }
+        }
+      });
+    });
+
+    document.getElementById('resizeHandle').addEventListener('mousedown', (e) => {
+      if (LOCKED_NODES || !selectedNodeId) return;
+      resizing.active = true;
+      resizing.nodeId = selectedNodeId;
+      resizing.startX = e.clientX;
+      resizing.startY = e.clientY;
+      const node = graph.nodes.get(selectedNodeId);
+      resizing.startWidth = node.widthConstraint || 100;
+      resizing.startHeight = node.heightConstraint || 50;
+      e.stopPropagation();
+    });
+
+    container.addEventListener('mousemove', (e) => {
+      if (!resizing.active) return;
+      const dx = e.clientX - resizing.startX;
+      const dy = e.clientY - resizing.startY;
+      graph.nodes.update({
+        id: resizing.nodeId,
+        widthConstraint: Math.max(50, resizing.startWidth + dx),
+        heightConstraint: Math.max(30, resizing.startHeight + dy)
+      });
+    });
+
+    container.addEventListener('mouseup', () => { resizing.active = false; });
+
+    function editNode() {
+      if (LOCKED_NODES) return;
+      editingId = selectedNodeId; const node = graph.nodes.get(editingId);
+      document.getElementById('nodeTitle').value = node.label.split('<')[0].trim();
+      document.getElementById('nodeDesc').value = node.desc || '';
+      document.getElementById('nodeShowDesc').checked = node.showDesc || false;
+      
+      const color = typeof node.color === 'object' ? node.color.background : (node.color || '#ffffff');
+      document.getElementById('nodeColor').value = color;
+      
+      openModal('nodeModal');
+    }
+
+    function deleteNode() {
+      if (LOCKED_NODES) return;
+      graph.nodes.remove(selectedNodeId);
+      document.getElementById('nodeActions').style.display = 'none';
+    }
+    
+    function openEdgeModal() {
+      if (LOCKED_NODES) return;
+      editingId = selectedNodeId; const edge = graph.edges.get(editingId);
+      document.getElementById('edgeLabel').value = edge.label || '';
+      document.getElementById('edgeDesc').value = edge.desc || '';
+      
+      currentEdgeTags = edge.tags || (edge.type ? [edge.type] : ['default']);
+      renderTags();
+      
+      const allTags = new Set();
+      graph.edges.get().forEach(e => {
+        (e.tags || [e.type || 'default']).forEach(t => allTags.add(t));
+      });
+      const datalist = document.getElementById('tagSuggestions');
+      datalist.innerHTML = '';
+      allTags.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t;
+        datalist.appendChild(opt);
+      });
+
+      let current = 'none';
+      if (edge.arrows) {
+        if (typeof edge.arrows === 'string') current = edge.arrows;
+        else if (edge.arrows.to && edge.arrows.from) current = 'to, from';
+        else if (edge.arrows.to) current = 'to';
+        else if (edge.arrows.from) current = 'from';
+      }
+      document.getElementById('edgeDirection').value = current;
+      
+      const color = typeof edge.color === 'object' ? edge.color.color : (edge.color || '#848484');
+      document.getElementById('edgeColor').value = color;
+      
+      openModal('edgeModal');
+    }
+
+    function renderTags() {
+      const container = document.getElementById('tagContainer');
+      const input = document.getElementById('edgeTagsInput');
+      
+      Array.from(container.querySelectorAll('.tag-pill')).forEach(el => el.remove());
+      
+      currentEdgeTags.forEach(tag => {
+        const pill = document.createElement('span');
+        pill.className = 'tag-pill';
+        pill.style.background = '#e0e0e0'; pill.style.padding = '2px 8px'; pill.style.borderRadius = '12px'; pill.style.fontSize = '12px'; pill.style.display = 'flex'; pill.style.alignItems = 'center'; pill.style.gap = '4px';
+        pill.innerText = tag;
+        
+        const x = document.createElement('span');
+        x.innerText = '×'; x.style.cursor = 'pointer'; x.style.fontWeight = 'bold';
+        x.onclick = () => {
+          currentEdgeTags = currentEdgeTags.filter(t => t !== tag);
+          renderTags();
+        };
+        
+        pill.appendChild(x);
+        container.insertBefore(pill, input);
+      });
+    }
+
+    document.getElementById('edgeTagsInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        const val = e.target.value.trim();
+        if (val && !currentEdgeTags.includes(val)) {
+          currentEdgeTags.push(val);
+          e.target.value = '';
+          renderTags();
+        }
+      }
+    });
+
+    function toggleNewTypeInput() {
+      const select = document.getElementById('edgeTypeSelect');
+      const input = document.getElementById('newEdgeType');
+      input.style.display = select.value === 'create_new' ? 'block' : 'none';
+    }
+
+    function deleteEdge() { 
+      if (LOCKED_NODES) return;
+      const edge = graph.edges.get(selectedNodeId);
+      if (edge && edge.controlPointId) graph.nodes.remove(edge.controlPointId);
+      graph.edges.remove(selectedNodeId); 
+      document.getElementById('edgeActions').style.display = 'none'; 
+    }
+    
+    function cycleEdgeDirection() {
+      if (LOCKED_NODES) return;
+      const edge = graph.edges.get(selectedNodeId);
+      if (!edge) return;
+      
+      const states = ['to', 'from', 'to, from', 'none'];
+      
+      let current = 'none';
+      if (edge.arrows) {
+        if (typeof edge.arrows === 'string') current = edge.arrows;
+        else if (edge.arrows.to && edge.arrows.from) current = 'to, from';
+        else if (edge.arrows.to) current = 'to';
+        else if (edge.arrows.from) current = 'from';
+      }
+      
+      const nextIndex = (states.indexOf(current) + 1) % states.length;
+      const nextState = states[nextIndex];
+      
+      graph.edges.update({ id: selectedNodeId, arrows: nextState });
+    }
+
+    function duplicateNode() {
+      if (LOCKED_NODES) return;
+      const node = graph.nodes.get(selectedNodeId);
+      graph.nodes.add({ ...node, id: `node-${Date.now()}`, x: (node.x||0) + 30, y: (node.y||0) + 30 });
+      document.getElementById('nodeActions').style.display = 'none';
+    }
+
+    function openModal(id) { document.getElementById(id).classList.add('active'); document.getElementById('overlay').classList.add('active'); activeModal = id; }
+    function closeModal() { if (activeModal) document.getElementById(activeModal).classList.remove('active'); document.getElementById('overlay').classList.remove('active'); activeModal = null; }
+
+    function saveNode() {
+      const label = document.getElementById('nodeTitle').value;
+      const desc = document.getElementById('nodeDesc').value;
+      const showDesc = document.getElementById('nodeShowDesc').checked;
+      
+      let fullLabel = label;
+      if (showDesc && desc) {
+        const shortDesc = desc.length > 40 ? desc.substring(0, 40) + '...' : desc;
+        fullLabel = `${label}\n<i>${shortDesc}</i>`;
+      }
+      
+      graph.nodes.update({ id: editingId, label: fullLabel, title: desc, desc, showDesc, color: { background: document.getElementById('nodeColor').value } });
+      closeModal();
+    }
+
+    function saveEdge() {
+      const input = document.getElementById('edgeTagsInput');
+      if (input.value.trim()) {
+        currentEdgeTags.push(input.value.trim());
+      }
+      if (currentEdgeTags.length === 0) currentEdgeTags.push('default');
+      
+      const desc = document.getElementById('edgeDesc').value;
+      
+      graph.edges.update({ 
+        id: editingId, 
+        label: document.getElementById('edgeLabel').value,
+        desc: desc,
+        tags: currentEdgeTags,
+        color: document.getElementById('edgeColor').value,
+        arrows: document.getElementById('edgeDirection').value 
+      });
+      
+      closeModal(); updateLayers();
+    }
+
+    function cycleEdgeStyle() {
+      if (LOCKED_NODES) return;
+      const edge = graph.edges.get(selectedNodeId);
+      if (!edge) return;
+      
+      const states = ['normal', 'bold', 'dashed'];
+      const current = edge.customStyle || 'normal';
+      
+      const nextIndex = (states.indexOf(current) + 1) % states.length;
+      const nextState = states[nextIndex];
+      
+      let update = { id: selectedNodeId, customStyle: nextState };
+      if (nextState === 'normal') { update.width = 1.5; update.dashes = false; }
+      else if (nextState === 'bold') { update.width = 4; update.dashes = false; }
+      else if (nextState === 'dashed') { update.width = 1.5; update.dashes = true; }
+      
+      graph.edges.update(update);
+      updateLayers();
+    }
+
+    function updateLayers() {
+      const edges = graph.edges.get();
+      const nodes = graph.nodes.get();
+      const allTags = new Set();
+      
+      edges.forEach(e => {
+        const tags = e.tags || (e.type ? [e.type] : ['default']);
+        tags.forEach(t => allTags.add(t));
+      });
+      
+      const container = document.getElementById('layerFilters');
+      container.innerHTML = '';
+      
+      allTags.forEach(tag => {
+        if (!visibleLayers.has(tag)) visibleLayers.add(tag);
+        
+        const div = document.createElement('div');
+        div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.justifyContent = 'space-between';
+        
+        const label = document.createElement('label');
+        label.style.display = 'flex'; label.style.alignItems = 'center'; label.style.gap = '8px';
+        
+        const check = document.createElement('input');
+        check.type = 'checkbox'; check.checked = visibleLayers.has(tag);
+        check.onchange = (e) => {
+          if (e.target.checked) visibleLayers.add(tag); else visibleLayers.delete(tag);
+          filterEdges();
+        };
+        
+        label.appendChild(check);
+        label.appendChild(document.createTextNode(tag));
+        div.appendChild(label);
+        container.appendChild(div);
+      });
+      
+      filterEdges();
+      
+      // Update Legend
+      const legend = document.getElementById('legendContainer');
+      legend.innerHTML = '';
+      
+      const items = new Set();
+      nodes.forEach(n => { if(n.color && n.color.background) items.add(`node:${n.color.background}:normal`); });
+      edges.forEach(e => { 
+        if(e.color) {
+          const style = e.customStyle || 'normal';
+          items.add(`edge:${e.color}:${style}`);
+        }
+      });
+      
+      items.forEach(item => {
+        const [type, color, style] = item.split(':');
+        const div = document.createElement('div');
+        div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.gap = '8px';
+        
+        const box = document.createElement('div');
+        box.style.width = '16px'; box.style.background = color;
+        
+        if (type === 'node') {
+          box.style.height = '16px'; box.style.borderRadius = '4px';
+        } else {
+          box.style.height = style === 'bold' ? '4px' : '2px';
+          if (style === 'dashed') box.style.borderTop = `2px dashed ${color}`;
+          if (style === 'dashed') box.style.background = 'transparent';
+        }
+        
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = legendLabels[item] || `${type} (${style})`;
+        input.style.border = 'none'; input.style.background = 'transparent'; input.style.width = '100%';
+        if (LOCKED_NODES) {
+          input.readOnly = true;
+          input.style.cursor = 'default';
+        } else {
+          input.onchange = (e) => { legendLabels[item] = e.target.value; };
+        }
+        
+        div.appendChild(box);
+        div.appendChild(input);
+        legend.appendChild(div);
+      });
+    }
+
+    function filterEdges() {
+      graph.edges.get().forEach(e => {
+        const tags = e.tags || (e.type ? [e.type] : ['default']);
+        const isVisible = tags.some(t => visibleLayers.has(t));
+        graph.edges.update({ id: e.id, hidden: !isVisible });
+      });
+    }
+
+    function changeTypeColor(type, color) {
+      graph.edges.get().forEach(e => {
+        if ((e.type || 'default') === type) {
+          graph.edges.update({ id: e.id, color: color });
+        }
+      });
+    }
+
+    function toggleLayer(type, checked) {
+      if(checked) visibleLayers.add(type); else visibleLayers.delete(type);
+      graph.edges.get().forEach(e => { if((e.type || 'default') === type) graph.edges.update({id: e.id, hidden: !checked}); });
+    }
+
+    function loadGraphData(data) {
+      if (!data || !data.nodes) return;
+      graph.nodes.clear();
+      graph.edges.clear();
+      graph.nodes.add(data.nodes);
+      if (data.edges) graph.edges.add(data.edges);
+      
+      legendLabels = data.legendLabels ? JSON.parse(JSON.stringify(data.legendLabels)) : {};
+      visibleLayers.clear();
+      updateLayers();
+      setTimeout(() => { if (network) network.fit(); }, 50);
+    }
+
+    function resetToInitialState() {
+      const targetData = BAKED_DATA || currentBaselineData;
+      if (targetData) {
+        loadGraphData(JSON.parse(JSON.stringify(targetData)));
+      } else {
+        graph.nodes.clear();
+        graph.edges.clear();
+        legendLabels = {};
+        visibleLayers.clear();
+        updateLayers();
+      }
+      document.getElementById('nodeActions').style.display = 'none';
+      document.getElementById('edgeActions').style.display = 'none';
+      document.getElementById('descBox').style.display = 'none';
+      document.getElementById('customTooltip').style.display = 'none';
+      if (connecting.active) {
+        connecting.active = false;
+        connecting.from = null;
+        connectBtn.classList.remove('active');
+        document.getElementById('connectBanner').style.display = 'none';
+      }
+    }
+
+    function openSaveCustomHtmlModal() {
+      document.getElementById('customHtmlFileName').value = 'mindmap.html';
+      document.getElementById('lockNodesCheckbox').checked = LOCKED_NODES;
+      openModal('saveHtmlModal');
+    }
+
+    const HTML_SKELETON_PREFIX = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MindNode Pro</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"><\/script>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 0; background: #f9f9f9; color: #333; }
+    #toolbar { display: flex; gap: 10px; padding: 12px 20px; background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); border-bottom: 1px solid #e0e0e0; align-items: center; flex-wrap: wrap; }
+    button, select, input[type=file] { padding: 6px 14px; font-size: 13px; font-weight: 500; border: 1px solid #d0d0d0; border-radius: 6px; background: #fff; cursor: pointer; transition: all 0.2s; }
+    button:hover { background: #f0f0f0; border-color: #b0b0b0; }
+    button.active { background: #007aff; color: white; border-color: #007aff; }
+    #sidebar { position: fixed; top: 54px; left: 0; width: 200px; height: calc(100vh - 54px); background: white; border-right: 1px solid #e0e0e0; padding: 20px; box-sizing: border-box; z-index: 10; overflow-y: auto; }
+    #network { width: calc(100vw - 200px); height: calc(100vh - 54px); margin-left: 200px; background: #fafafa; position: relative; }
+    
+    .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 24px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); z-index: 1000; width: 320px; }
+    .modal.active { display: block; }
+    .modal h3 { margin-top: 0; font-size: 18px; }
+    .modal label { display: block; margin-bottom: 12px; font-size: 13px; color: #666; }
+    .modal input, .modal select, .modal textarea { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-family: inherit; }
+    .modal-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+    .overlay { display: none; position: fixed; top:0; left:0; width:100vw; height:100vh; background: rgba(0,0,0,0.2); z-index: 999; }
+    .overlay.active { display: block; }
+    
+    #nodeActions { display: none; position: absolute; background: white; border: 1px solid #ddd; border-radius: 6px; padding: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; gap: 4px; transform: translate(-50%, calc(-100% - 8px)); }
+    #edgeActions { display: none; position: absolute; background: white; border: 1px solid #ddd; border-radius: 6px; padding: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; gap: 4px; transform: translate(-50%, -50%); }
+    #nodeActions button, #edgeActions button { border: none; padding: 4px 8px; font-size: 14px; }
+    
+    .custom-tooltip { display: none; position: absolute; background: white; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 13px; z-index: 1000; pointer-events: none; transform: translate(-50%, 15px); max-width: 200px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .desc-box { display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 8px; padding: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 99; width: 200px; max-height: 150px; overflow-y: auto; font-size: 13px; transform: translate(-50%, 10px); }
+    .legend-box { position: absolute; bottom: 20px; right: 20px; background: white; border: 1px solid #ccc; border-radius: 8px; padding: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 99; min-width: 150px; font-size: 13px; }
+    #connectBanner { display: none; position: fixed; top: 64px; left: 50%; transform: translateX(-50%); background: #007aff; color: white; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+
+  <div id="toolbar">
+    <button id="addNodeBtn">+ Add Node</button>
+    <button id="addTextBtn">+ Add Text</button>
+    <button id="connectBtn">/ Connect</button>
+    <button onclick="network.moveTo({scale: network.getScale() * 1.2})">Zoom In</button>
+    <button onclick="network.moveTo({scale: network.getScale() * 0.8})">Zoom Out</button>
+    <button id="resetBtn" onclick="resetToInitialState()" title="Reset to original saved state">Reset</button>
+    <span style="border-left: 1px solid #ccc; height: 20px;"></span>
+    <span id="lockedBadge" style="display:none; padding:4px 10px; font-size:12px; font-weight:600; color:#555; background:#e8e8e8; border-radius:12px;">🔒 Locked</span>
+    <span style="margin-left: auto;"></span>
+    <button id="createNewBtn" onclick="createNewMap()" title="Open clean, blank HTML in new window">Create New</button>
+    <input type="file" id="loadFile" style="display:none" accept=".json">
+    <button id="loadBtn" onclick="document.getElementById('loadFile').click()">Load</button>
+    <button id="saveJsonBtn" onclick="saveConfig()">Save to JSON</button>
+    <button id="saveHtmlBtn" onclick="openSaveCustomHtmlModal()">Save to Custom HTML</button>
+    <button onclick="exportPNG()">Export</button>
+  </div>
+
+  <div id="connectBanner">Click two nodes to connect them</div>
+
+  <div id="sidebar">
+    <h3 style="margin-top:0; font-size:14px; text-transform:uppercase; color:#666;">Connection Layers</h3>
+    <div id="layerFilters" style="display:flex; flex-direction:column; gap:8px; margin-bottom: 20px;"></div>
+  </div>
+
+  <div id="network"></div>
+  
+  <div id="legendBox" class="legend-box">
+    <h4 style="margin:0 0 8px 0; font-size:12px; text-transform:uppercase; color:#666; cursor:move;" id="legendHeader">Legend</h4>
+    <div id="legendContainer" style="display:flex; flex-direction:column; gap:8px;"></div>
+  </div>
+  <div class="overlay" id="overlay"></div>
+
+  <div id="nodeActions">
+    <button onclick="editNode()" title="Edit">✎</button>
+    <button onclick="duplicateNode()" title="Duplicate">⎘</button>
+    <button onclick="deleteNode()" title="Delete" style="color: #ff3b30;">✕</button>
+    <button id="resizeHandle" title="Drag to Resize" style="cursor: se-resize;">⤡</button>
+  </div>
+
+  <div id="edgeActions">
+    <button onclick="cycleEdgeDirection()" title="Cycle Direction">⇄</button>
+    <button onclick="cycleEdgeStyle()" title="Cycle Style">⁓</button>
+    <button onclick="openEdgeModal()" title="Edit">✎</button>
+    <button onclick="deleteEdge()" title="Delete" style="color: #ff3b30;">✕</button>
+  </div>
+
+  <div id="descBox" class="desc-box"></div>
+
+  <input type="text" id="inlineEditor" style="display:none; position:absolute; z-index:1000; border: 1px solid #007aff; border-radius: 4px; padding: 4px; text-align: center; outline: none; background: white;">
+
+  <div id="customTooltip" class="custom-tooltip"></div>
+
+  <!-- Node Modal -->
+  <div class="modal" id="nodeModal">
+    <h3>Edit Node</h3>
+    <label>Title: <input type="text" id="nodeTitle"></label>
+    <label>Description: <textarea id="nodeDesc" rows="3"></textarea></label>
+    <label><input type="checkbox" id="nodeShowDesc"> Show description in node</label>
+    <label>Color: <input type="color" id="nodeColor"></label>
+    <div class="modal-buttons">
+      <button onclick="closeModal()">Cancel</button>
+      <button onclick="saveNode()" style="background:#007aff; color:white;">Save</button>
+    </div>
+  </div>
+
+  <!-- Edge Modal -->
+  <div class="modal" id="edgeModal">
+    <h3>Edit Connection</h3>
+    <label>Label: <input type="text" id="edgeLabel"></label>
+    <label>Description: <textarea id="edgeDesc" rows="2"></textarea></label>
+    <label>Tags: 
+      <div id="tagContainer" style="display:flex; flex-wrap:wrap; gap:4px; padding:4px; border:1px solid #ccc; border-radius:6px; align-items:center;">
+        <input type="text" id="edgeTagsInput" placeholder="Add tag..." list="tagSuggestions" style="border:none; outline:none; flex:1; min-width:60px; margin:0; padding:0;">
+        <datalist id="tagSuggestions"></datalist>
+      </div>
+    </label>
+    <label>Direction: 
+      <div style="display:flex; gap:8px; align-items:center;">
+        <select id="edgeDirection" style="flex:1;">
+          <option value="none">None</option>
+          <option value="to">One Way (->)</option>
+          <option value="from">One Way (<-)</option>
+          <option value="to, from">Both (<->)</option>
+        </select>
+        <button type="button" onclick="switchEdgeDirection()" style="padding:8px;">⇄</button>
+      </div>
+    </label>
+    <label>Color: <input type="color" id="edgeColor"></label>
+    <div class="modal-buttons">
+      <button onclick="closeModal()">Cancel</button>
+      <button onclick="saveEdge()" style="background:#007aff; color:white;">Save</button>
+    </div>
+  </div>
+
+  <!-- Save Custom HTML Modal -->
+  <div class="modal" id="saveHtmlModal" style="width: 340px;">
+    <h3>Save to Custom HTML</h3>
+    <label>File Name: <input type="text" id="customHtmlFileName" value="mindmap.html" placeholder="mindmap.html"></label>
+    <label style="display:flex; align-items:center; gap:8px; margin-top:14px; margin-bottom:4px; cursor:pointer;">
+      <input type="checkbox" id="lockNodesCheckbox" style="width:auto; margin:0;">
+      <span style="font-weight:600; color:#333;">Lock Nodes</span>
+    </label>
+    <div style="font-size:12px; color:#666; margin-bottom:16px; line-height:1.4;">
+      Allows showing and hiding connection layers, but prevents editing, adding, or deleting nodes on the new HTML.
+    </div>
+    <div class="modal-buttons">
+      <button onclick="closeModal()">Cancel</button>
+      <button onclick="confirmSaveCustomHtml()" style="background:#007aff; color:white;">Save HTML</button>
+    </div>
+  </div>
+
+  <script id="appScript">`;
+
+    const HTML_SKELETON_SUFFIX = `\n  <\/script>\n</body>\n</html>`;
+
+    function downloadFile(content, fileName, mimeType = 'text/html;charset=utf-8') {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        if (a.parentNode) a.parentNode.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 500);
+    }
+
+    function confirmSaveCustomHtml() {
+      try {
+        let fileName = document.getElementById('customHtmlFileName').value.trim();
+        if (!fileName) fileName = 'mindmap.html';
+        if (!fileName.toLowerCase().endsWith('.html') && !fileName.toLowerCase().endsWith('.htm')) {
+          fileName += '.html';
+        }
+        const lockNodes = document.getElementById('lockNodesCheckbox').checked;
+
+        const nodes = graph.nodes.get();
+        const positions = network.getPositions();
+        const savedNodes = nodes.map(node => {
+          if (positions[node.id]) {
+            node.x = positions[node.id].x;
+            node.y = positions[node.id].y;
+          }
+          return node;
+        });
+
+        const data = {
+          nodes: savedNodes,
+          edges: graph.edges.get(),
+          legendLabels: legendLabels
+        };
+
+        const customHtml = getCleanHtml(data, lockNodes);
+        downloadFile(customHtml, fileName, 'text/html;charset=utf-8');
+        closeModal();
+      } catch (err) {
+        console.error('Error saving custom HTML:', err);
+        alert('Could not save HTML: ' + err.message);
+      }
+    }
+
+    function createNewMap() {
+      try {
+        const cleanHtml = getCleanHtml(null, false);
+        const blob = new Blob([cleanHtml], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        if (!win) {
+          alert('Popup blocked. Please allow popups to open the clean mind map.');
+        }
+      } catch (err) {
+        console.error('Error creating new map:', err);
+        alert('Could not create new map: ' + err.message);
+      }
+    }
+
+    function getCleanHtml(bakedData, lockNodes) {
+      const scriptTag = document.getElementById('appScript');
+      let scriptCode = scriptTag ? scriptTag.textContent : '';
+
+      const serializedData = bakedData ? JSON.stringify(bakedData).replace(/<\/(script)/gi, '<\\/$1') : 'null';
+      scriptCode = scriptCode.replace(
+        /\/\* BAKED_DATA_START \*\/[\s\S]*?\/\* BAKED_DATA_END \*\//,
+        () => `/* BAKED_DATA_START */\n    const BAKED_DATA = ${serializedData};\n    /* BAKED_DATA_END */`
+      );
+      scriptCode = scriptCode.replace(
+        /\/\* LOCKED_NODES_START \*\/[\s\S]*?\/\* LOCKED_NODES_END \*\//,
+        () => `/* LOCKED_NODES_START */\n    const LOCKED_NODES = ${lockNodes ? 'true' : 'false'};\n    /* LOCKED_NODES_END */`
+      );
+
+      return HTML_SKELETON_PREFIX + scriptCode + HTML_SKELETON_SUFFIX;
+    }
+
+    function saveConfig() {
+      try {
+        const nodes = graph.nodes.get();
+        const positions = network.getPositions();
+        
+        const savedNodes = nodes.map(node => {
+          if (positions[node.id]) {
+            node.x = positions[node.id].x;
+            node.y = positions[node.id].y;
+          }
+          return node;
+        });
+
+        const data = {
+          nodes: savedNodes,
+          edges: graph.edges.get(),
+          legendLabels: legendLabels
+        };
+
+        downloadFile(JSON.stringify(data, null, 2), 'mindmap.json', 'application/json;charset=utf-8');
+      } catch (err) {
+        console.error('Error saving JSON:', err);
+        alert('Could not save JSON: ' + err.message);
+      }
+    }
+
+    document.getElementById('loadFile').addEventListener('change', (e) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          currentBaselineData = JSON.parse(JSON.stringify(data));
+          loadGraphData(data);
+        } catch (err) {
+          alert('Failed to parse JSON file: ' + err.message);
+        }
+      };
+      if (e.target.files && e.target.files[0]) {
+        reader.readAsText(e.target.files[0]);
+      }
+      e.target.value = '';
+    });
+
+    function exportPNG() {
+      const canvas = container.querySelector('canvas');
+      if (!canvas) return;
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = 'mindmap.png'; a.click();
+    }
+
+    applyLockState(LOCKED_NODES);
+    if (BAKED_DATA) {
+      loadGraphData(JSON.parse(JSON.stringify(BAKED_DATA)));
+    }
+  
+  
+  </script>
+</body>
+</html>
